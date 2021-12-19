@@ -7,7 +7,7 @@ import Html.Attributes as Attr
 import Html.Events exposing (onClick, onInput)
 import Url exposing (Url)
 import Url.Builder as BuildUrl
-import Url.Parser as Url
+import Url.Parser as Url exposing ((</>))
 import Url.Parser.Query as Query
 
 
@@ -21,7 +21,6 @@ type Step
     = Creating
     | Playing Game
     | ShowingUrl Game
-    | ShowingCadaver Game
 
 
 type Msg
@@ -82,7 +81,7 @@ join maybes =
 
 
 gameParser =
-    Url.map parseGame (Url.query (Query.string "ongoing-state"))
+    Url.map parseGame (Url.s "index.html" </> Url.query (Query.string "ongoing-state"))
 
 
 parseGame =
@@ -125,11 +124,7 @@ update msg model =
             ( { model | formInputs = updateHiddenEntry visible model.formInputs }, Cmd.none )
 
         ContinueGameClicked game ->
-            if Game.isOver game then
-                ( { model | step = ShowingCadaver game }, Cmd.none )
-
-            else
-                ( { model | step = ShowingUrl game }, Cmd.none )
+            ( { model | step = ShowingUrl game }, Cmd.none )
 
 
 updateVisibleEntry : String -> FormInputs -> FormInputs
@@ -169,43 +164,117 @@ view { step, formInputs } =
                     []
                 , Html.button [ onClick AddPlayerClicked ] [ Html.text "+" ]
                 , Html.div [] (players formInputs.otherPlayers)
-                , Html.div [] [ Html.button [ onClick (StartGameClicked (Game.new formInputs.otherPlayers)) ] [ Html.text "Comincia" ] ]
+                , startGameButton formInputs.otherPlayers
                 ]
 
         ShowingUrl game ->
-            Html.a [ Attr.href (serialiseAsQueryParam game) ]
-                [ Html.text "send this to friend"
-                ]
+            case Game.status game of
+                Game.Playing { hint, currentPlayer } ->
+                    Html.a [ Attr.href (serialiseAsQueryParam game) ]
+                        [ Html.text ("send this to " ++ currentPlayer)
+                        ]
+
+                Game.LastMove { currentPlayer } ->
+                    Html.a [ Attr.href (serialiseAsQueryParam game) ]
+                        [ Html.text ("send this to " ++ currentPlayer)
+                        ]
+
+                Game.Ended _ ->
+                    Html.a [ Attr.href (serialiseAsQueryParam game) ]
+                        [ Html.text "send this to everyone"
+                        ]
 
         Playing game ->
-            Html.div []
-                [ Html.text "Aggiungi  la tua storia"
-                , Html.input
-                    [ Attr.type_ "text"
-                    , Attr.placeholder "la tua storia"
-                    , Attr.value formInputs.visible
-                    , onInput VisibleEntryTyped
-                    ]
-                    []
-                , Html.input
-                    [ Attr.type_ "text"
-                    , Attr.placeholder "il cadavere per il prossimo giocatore"
-                    , Attr.value formInputs.hidden
-                    , onInput HiddenEntryTyped
-                    ]
-                    []
-                , Html.div [] [ Html.button [ onClick (ContinueGameClicked (Game.addEntry { visible = formInputs.visible, hidden = formInputs.hidden } game)) ] [ Html.text "Avanti" ] ]
-                ]
+            case Game.status game of
+                Game.Playing { hint, currentPlayer } ->
+                    Html.div []
+                        [ Html.div [] [ Html.text ("tocca a te, " ++ currentPlayer) ]
+                        , Maybe.map (Html.text >> List.singleton >> Html.div []) hint |> Maybe.withDefault (Html.div [] [])
+                        , Html.input
+                            [ Attr.type_ "text"
+                            , Attr.placeholder "nascosto"
+                            , Attr.value formInputs.hidden
+                            , onInput HiddenEntryTyped
+                            ]
+                            []
+                        , Html.input
+                            [ Attr.type_ "text"
+                            , Attr.placeholder "per il prossimo"
+                            , Attr.value formInputs.visible
+                            , onInput VisibleEntryTyped
+                            ]
+                            []
+                        , makeMoveButton game formInputs
+                        ]
 
-        ShowingCadaver game ->
-            Html.text (Game.serialise game)
+                Game.LastMove { hint, currentPlayer } ->
+                    Html.div []
+                        [ Html.div [] [ Html.text ("tocca a te, " ++ currentPlayer) ]
+                        , Html.div [] [ Html.text hint ]
+                        , Html.input
+                            [ Attr.type_ "text"
+                            , Attr.placeholder "nascosto"
+                            , Attr.value formInputs.hidden
+                            , onInput HiddenEntryTyped
+                            ]
+                            []
+                        , finishGameButton game formInputs
+                        ]
+
+                Game.Ended { entries, finalEntry } ->
+                    Html.div []
+                        (viewEntries entries ++ viewFinalEntry finalEntry)
+
+
+viewEntries =
+    List.map viewEntry
+
+
+viewEntry { player, visible, hidden } =
+    Html.div [] [ Html.text (player ++ ": " ++ hidden ++ " " ++ visible) ]
+
+
+viewFinalEntry { player, hidden } =
+    [ Html.div [] [ Html.text (player ++ ": " ++ hidden) ] ]
+
+
+makeMoveButton : Game -> FormInputs -> Html.Html Msg
+makeMoveButton g formInputs =
+    if String.isEmpty formInputs.hidden || String.isEmpty formInputs.visible then
+        Html.div [] []
+
+    else
+        Game.makeNormalMove formInputs.hidden formInputs.visible g
+            |> Maybe.map (\game_ -> Html.button [ onClick (ContinueGameClicked game_) ] [ Html.text "continua" ])
+            |> Maybe.withDefault (Html.div [] [])
+
+
+finishGameButton : Game -> FormInputs -> Html.Html Msg
+finishGameButton g formInputs =
+    if String.isEmpty formInputs.hidden then
+        Html.div [] []
+
+    else
+        Game.makeLastMove formInputs.hidden g
+            |> Maybe.map (\game_ -> Html.button [ onClick (ContinueGameClicked game_) ] [ Html.text "concludi" ])
+            |> Maybe.withDefault (Html.div [] [])
+
+
+startGameButton : List String -> Html.Html Msg
+startGameButton players_ =
+    List.head players_
+        |> Maybe.map
+            (\firstPlayer ->
+                Html.div [] [ Html.button [ onClick (StartGameClicked (Game.new firstPlayer (List.drop 1 players_))) ] [ Html.text "Comincia" ] ]
+            )
+        |> Maybe.withDefault (Html.div [] [])
 
 
 serialiseAsQueryParam : Game -> String
 serialiseAsQueryParam game =
-    BuildUrl.absolute [] [ BuildUrl.string "ongoing-state" (Game.serialise game) ]
+    BuildUrl.absolute [ "index.html" ] [ BuildUrl.string "ongoing-state" (Game.serialise game) ]
 
 
 players : List String -> List (Html.Html msg)
 players otherPlayers =
-    List.map Html.text otherPlayers
+    List.map (Html.text >> List.singleton >> Html.div []) otherPlayers

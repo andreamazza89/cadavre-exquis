@@ -1,56 +1,46 @@
 module Game exposing
     ( Game
-    , addEntry
+    , Status(..)
     , deserialise
-    , isOver
+    , makeLastMove
+    , makeNormalMove
     , new
     , serialise
+    , status
     )
 
-import Json.Decode as Decoder
+import Json.Decode as Decoder exposing (Decoder)
 import Json.Encode as Encoder
 
 
-
---type alias Turn =
---    { hint : Maybe String
---    , buildNextMove : Maybe BuildNextMove
---    , currentPlayer : Player
---    }
---
---
---type alias BuildNextMove =
---    String -> String -> NextMove
---
---
---type NextMove
---    = NextMove String String
---
---
---type alias PreviousThing =
---    String
-
-
 type Game
-    = Game Game_
+    = Ongoing OngoingGame_
+    | Finished FinishedGame_
 
 
-type alias Game_ =
+type alias OngoingGame_ =
     { before : List PlayerEntry
-    , current : Maybe Player -- when the game is over, there's no current player
+    , current : Player
     , next : List Player
+    }
+
+
+type alias FinishedGame_ =
+    { entries : List PlayerEntry
+    , finalEntry : FinalPlayerEntry
     }
 
 
 type alias PlayerEntry =
     { player : Player
-    , entry : Entry
+    , visible : String
+    , hidden : String
     }
 
 
-type alias Entry =
-    { hidden : String
-    , visible : String
+type alias FinalPlayerEntry =
+    { player : Player
+    , hidden : String
     }
 
 
@@ -58,35 +48,79 @@ type alias Player =
     String
 
 
-new : List Player -> Game
-new players =
-    Game
+new : Player -> List Player -> Game
+new currentPlayer_ otherPlayers =
+    Ongoing
         { before = []
-        , current = List.head players -- "this is misusing it, as Nothing here indicates the end of the game"
-        , next = List.drop 1 players
+        , current = currentPlayer_
+        , next = otherPlayers
         }
 
 
-addEntry : Entry -> Game -> Game
-addEntry entry (Game game) =
-    if List.isEmpty game.next then
-        Game
-            { before = game.before ++ [ { player = game.current |> Maybe.withDefault "this is starting to smell", entry = entry } ]
-            , current = Nothing
-            , next = []
-            }
-
-    else
-        Game
-            { before = game.before ++ [ { player = game.current |> Maybe.withDefault "this is starting to smell", entry = entry } ]
-            , current = List.head game.next
-            , next = List.drop 1 game.next
-            }
+type Status
+    = Playing { hint : Maybe String, currentPlayer : Player }
+    | LastMove { hint : String, currentPlayer : Player }
+    | Ended { entries : List PlayerEntry, finalEntry : FinalPlayerEntry }
 
 
-isOver : Game -> Bool
-isOver (Game game) =
-    game.current == Nothing
+status : Game -> Status
+status game =
+    case game of
+        Ongoing ongoing_ ->
+            if List.isEmpty ongoing_.next then
+                LastMove
+                    { hint = lastEntry ongoing_.before |> Maybe.map .visible |> Maybe.withDefault "this should not happen"
+                    , currentPlayer = ongoing_.current
+                    }
+
+            else
+                Playing { hint = lastEntry ongoing_.before |> Maybe.map .visible, currentPlayer = ongoing_.current }
+
+        Finished finished_ ->
+            Ended finished_
+
+
+lastEntry : List a -> Maybe a
+lastEntry before =
+    List.drop (List.length before - 1) before
+        |> List.head
+
+
+makeLastMove : String -> Game -> Maybe Game
+makeLastMove hidden game =
+    case game of
+        Ongoing ongoingGame_ ->
+            if List.isEmpty ongoingGame_.next then
+                Just
+                    (Finished
+                        { entries = ongoingGame_.before
+                        , finalEntry = { player = ongoingGame_.current, hidden = hidden }
+                        }
+                    )
+
+            else
+                Nothing
+
+        Finished _ ->
+            Nothing
+
+
+makeNormalMove : String -> String -> Game -> Maybe Game
+makeNormalMove hidden visible game =
+    case game of
+        Ongoing ongoingGame_ ->
+            List.head ongoingGame_.next
+                |> Maybe.map
+                    (\nextPlayer ->
+                        Ongoing
+                            { before = ongoingGame_.before ++ [ { player = ongoingGame_.current, visible = visible, hidden = hidden } ]
+                            , current = nextPlayer
+                            , next = List.drop 1 ongoingGame_.next
+                            }
+                    )
+
+        Finished _ ->
+            Nothing
 
 
 
@@ -96,30 +130,53 @@ isOver (Game game) =
 deserialise : String -> Maybe Game
 deserialise =
     Decoder.decodeString gameDecoder
+        >> Debug.log "result"
         >> Result.toMaybe
 
 
 gameDecoder : Decoder.Decoder Game
 gameDecoder =
-    Decoder.map Game
-        (Decoder.map3 Game_
-            (Decoder.field "before" (Decoder.list playerEntryDecoder))
-            (Decoder.field "current" (Decoder.maybe Decoder.string))
-            (Decoder.field "next" (Decoder.list Decoder.string))
-        )
+    Decoder.field "type" Decoder.string
+        |> Decoder.andThen
+            (\t ->
+                case t of
+                    "ONGOING" ->
+                        Decoder.map Ongoing ongoingDecoder
+
+                    "FINISHED" ->
+                        Decoder.map Finished finishedDecoder
+
+                    _ ->
+                        Decoder.fail "unknown type"
+            )
 
 
-playerEntryDecoder : Decoder.Decoder PlayerEntry
+ongoingDecoder : Decoder OngoingGame_
+ongoingDecoder =
+    Decoder.map3 OngoingGame_
+        (Decoder.field "before" (Decoder.list playerEntryDecoder))
+        (Decoder.field "current" Decoder.string)
+        (Decoder.field "next" (Decoder.list Decoder.string))
+
+
+finishedDecoder =
+    Decoder.map2 FinishedGame_
+        (Decoder.field "entries" (Decoder.list playerEntryDecoder))
+        (Decoder.field "finalEntry" finalEntryDecoder)
+
+
+playerEntryDecoder : Decoder PlayerEntry
 playerEntryDecoder =
-    Decoder.map2 PlayerEntry
+    Decoder.map3 PlayerEntry
         (Decoder.field "player" Decoder.string)
-        (Decoder.field "entry" entryDecoder)
-
-
-entryDecoder : Decoder.Decoder Entry
-entryDecoder =
-    Decoder.map2 Entry
         (Decoder.field "visible" Decoder.string)
+        (Decoder.field "hidden" Decoder.string)
+
+
+finalEntryDecoder : Decoder FinalPlayerEntry
+finalEntryDecoder =
+    Decoder.map2 FinalPlayerEntry
+        (Decoder.field "player" Decoder.string)
         (Decoder.field "hidden" Decoder.string)
 
 
@@ -129,20 +186,30 @@ serialise game =
 
 
 toObject : Game -> Encoder.Value
-toObject (Game game) =
+toObject game =
+    case game of
+        Ongoing ongoing_ ->
+            Encoder.object
+                [ ( "type", Encoder.string "ONGOING" )
+                , ( "current", Encoder.string ongoing_.current )
+                , ( "before", encodeBefore ongoing_.before )
+                , ( "next", Encoder.list Encoder.string ongoing_.next )
+                ]
+
+        Finished finished_ ->
+            Encoder.object
+                [ ( "type", Encoder.string "FINISHED" )
+                , ( "entries", encodeBefore finished_.entries )
+                , ( "finalEntry", encodeFinal finished_.finalEntry )
+                ]
+
+
+encodeFinal : FinalPlayerEntry -> Encoder.Value
+encodeFinal { player, hidden } =
     Encoder.object
-        ([ ( "before", encodeBefore game.before )
-         , ( "next", Encoder.list Encoder.string game.next )
-         ]
-            ++ encodeCurrent game
-        )
-
-
-encodeCurrent : Game_ -> List ( String, Encoder.Value )
-encodeCurrent =
-    .current
-        >> Maybe.map (Encoder.string >> Tuple.pair "current" >> List.singleton)
-        >> Maybe.withDefault []
+        [ ( "player", Encoder.string player )
+        , ( "hidden", Encoder.string hidden )
+        ]
 
 
 encodeBefore : List PlayerEntry -> Encoder.Value
@@ -151,13 +218,9 @@ encodeBefore =
 
 
 encodeEntry : PlayerEntry -> Encoder.Value
-encodeEntry { player, entry } =
+encodeEntry { player, visible, hidden } =
     Encoder.object
         [ ( "player", Encoder.string player )
-        , ( "entry"
-          , Encoder.object
-                [ ( "hidden", Encoder.string entry.hidden )
-                , ( "visible", Encoder.string entry.visible )
-                ]
-          )
+        , ( "hidden", Encoder.string hidden )
+        , ( "visible", Encoder.string visible )
         ]

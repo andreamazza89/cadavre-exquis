@@ -1,6 +1,10 @@
 module Main exposing (main)
 
 import Browser
+import Element exposing (Element, centerX, el, fill, height, minimum, padding, rgb, spacing, width)
+import Element.Border as Border
+import Element.Font as Font exposing (underline)
+import Element.Input as Input exposing (labelHidden, placeholder)
 import Game exposing (Game)
 import Html
 import Html.Attributes as Attr
@@ -54,7 +58,7 @@ main : Program () Model Msg
 main =
     Browser.application
         { init = \_ url _ -> ( initFromUrl url, Cmd.none )
-        , view = \st -> { title = "Cadavre", body = [ view st ] }
+        , view = \st -> { title = "Cadavre", body = [ Element.layout [] (view2 st) ] }
         , update = update
         , subscriptions = always Sub.none
         , onUrlRequest = always NoOp
@@ -148,6 +152,169 @@ addPlayer inputs =
         | playerName = ""
         , otherPlayers = [ inputs.playerName ] ++ inputs.otherPlayers
     }
+
+
+view2 : Model -> Element Msg
+view2 { step, formInputs } =
+    case step of
+        Creating ->
+            newGameScreen formInputs
+
+        ShowingUrl game ->
+            case Game.status game of
+                Game.Playing { hint, currentPlayer } ->
+                    Element.link [ padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
+                        { url = serialiseAsQueryParam game
+                        , label =
+                            Element.text <| "Copia questo link e mandalo a " ++ currentPlayer
+                        }
+
+                Game.LastMove { currentPlayer } ->
+                    Element.link [ padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
+                        { url = serialiseAsQueryParam game
+                        , label =
+                            Element.text <| "Copia questo link e mandalo a " ++ currentPlayer
+                        }
+
+                Game.Ended _ ->
+                    Element.link [ padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
+                        { url = serialiseAsQueryParam game
+                        , label =
+                            Element.text <| "Vatti a guardare il cadavere a questo link"
+                        }
+
+        Playing game ->
+            playingScreen formInputs game
+
+
+newGameScreen : FormInputs -> Element Msg
+newGameScreen formInputs =
+    Element.column [ padding 40, spacing 90, centerX ]
+        [ welcomeMessage
+        , playerrs formInputs
+        , startButton formInputs
+        ]
+
+
+welcomeMessage : Element msg
+welcomeMessage =
+    Element.column [ spacing 5 ]
+        [ el
+            [ Font.bold, Font.size 44 ]
+            (Element.text "Benvenuto a Cadavre Exquis!")
+        , el
+            [ centerX, Font.size 30 ]
+            (Element.text "Aggiungi giocatori per creare una partita")
+        ]
+
+
+playerrs : FormInputs -> Element Msg
+playerrs formInputs =
+    Element.column [ centerX, spacing 20 ]
+        [ Element.row [ spacing 20 ]
+            [ Input.text []
+                { onChange = PlayerNameTyped
+                , text = formInputs.playerName
+                , placeholder = Just (placeholder [] (Element.text "Es. Asdrubale"))
+                , label = labelHidden "player name"
+                }
+            , Input.button [ padding 5, height fill, Border.width 2, Border.rounded 2 ]
+                { onPress = Just AddPlayerClicked
+                , label = Element.text "+"
+                }
+            ]
+        , Element.column [ spacing 15 ]
+            (List.map Element.text formInputs.otherPlayers)
+        ]
+
+
+startButton : FormInputs -> Element Msg
+startButton formInputs =
+    List.head formInputs.otherPlayers
+        |> Maybe.andThen
+            -- this is kinda terrible, would prefer to either introduce some form validation construct of just use an if statement
+            (\firstPlayer ->
+                if List.length formInputs.otherPlayers > 1 then
+                    Just firstPlayer
+
+                else
+                    Nothing
+            )
+        |> Maybe.map
+            (\firstPlayer ->
+                Input.button [ centerX, padding 5, height fill, Border.width 2, Border.rounded 2 ]
+                    { onPress = Just (StartGameClicked (Game.new firstPlayer (List.drop 1 formInputs.otherPlayers)))
+                    , label = Element.text "Entra nella bara..."
+                    }
+            )
+        |> Maybe.withDefault Element.none
+
+
+playingScreen : FormInputs -> Game -> Element Msg
+playingScreen formInput game =
+    case Game.status game of
+        Game.Playing { hint, currentPlayer } ->
+            Element.column [ width fill, centerX, padding 90, spacing 50 ]
+                [ prompt currentPlayer
+                , Maybe.map Element.text hint |> Maybe.withDefault Element.none
+                , yourStory formInput
+                , hintToTheNext formInput
+                , moveButton game formInput
+                ]
+
+        Game.LastMove { hint, currentPlayer } ->
+            Element.column [ width fill, centerX, padding 90, spacing 50 ]
+                [ prompt currentPlayer
+                , Element.text hint
+                , yourStory formInput
+                , moveButton game formInput
+                ]
+
+        Game.Ended { entries, finalEntry } ->
+            Element.column []
+                (List.map (\entry -> Element.text (entry.hidden ++ entry.visible)) entries
+                    ++ [ Element.text finalEntry.hidden ]
+                )
+
+
+prompt player =
+    Element.text ("Tocca a te " ++ player)
+
+
+yourStory formInput =
+    Input.multiline [ height (fill |> minimum 300) ]
+        { onChange = HiddenEntryTyped
+        , text = formInput.hidden
+        , placeholder = Nothing
+        , label = labelHidden "yourStory"
+        , spellcheck = False
+        }
+
+
+hintToTheNext formInput =
+    Input.multiline []
+        { onChange = VisibleEntryTyped
+        , text = formInput.visible
+        , placeholder = Just (placeholder [] (Element.text "Qui va il messagio per il prossimo"))
+        , label = labelHidden "yourStory"
+        , spellcheck = False
+        }
+
+
+moveButton g formInputs =
+    if String.isEmpty formInputs.hidden || String.isEmpty formInputs.visible then
+        Element.none
+
+    else
+        Game.makeNormalMove formInputs.hidden formInputs.visible g
+            |> Maybe.map
+                (\game_ ->
+                    Input.button [ padding 5, height fill, Border.width 2, Border.rounded 2 ]
+                        { onPress = Just (ContinueGameClicked game_)
+                        , label = Element.text "Procedi"
+                        }
+                )
+            |> Maybe.withDefault Element.none
 
 
 view { step, formInputs } =

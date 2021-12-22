@@ -15,8 +15,15 @@ import Utils.NonEmptyString as NonEmptyString exposing (NonEmptyString)
 
 
 type Game
-    = Ongoing OngoingGame_
+    = JustStarted JustStartedGame_
+    | Ongoing OngoingGame_
     | Finished FinishedGame_
+
+
+type alias JustStartedGame_ =
+    { current : Player
+    , next : List Player
+    }
 
 
 type alias OngoingGame_ =
@@ -67,6 +74,12 @@ type Status
 status : Game -> Status
 status game =
     case game of
+        JustStarted justStarted_ ->
+            Playing
+                { hint = Nothing
+                , currentPlayer = justStarted_.current
+                }
+
         Ongoing ongoing_ ->
             if List.isEmpty ongoing_.next then
                 LastMove
@@ -98,6 +111,9 @@ lastEntry before =
 makeLastMove : NonEmptyString -> Game -> Maybe Game
 makeLastMove hidden game =
     case game of
+        JustStarted _ ->
+            Nothing
+
         Ongoing ongoingGame_ ->
             if List.isEmpty ongoingGame_.next then
                 Just
@@ -117,6 +133,17 @@ makeLastMove hidden game =
 makeNormalMove : NonEmptyString -> NonEmptyString -> Game -> Maybe Game
 makeNormalMove hidden visible game =
     case game of
+        JustStarted justStartedGame_ ->
+            List.head justStartedGame_.next
+                |> Maybe.map
+                    (\nextPlayer ->
+                        Ongoing
+                            { before = [ { player = justStartedGame_.current, visible = visible, hidden = hidden } ]
+                            , current = nextPlayer
+                            , next = List.drop 1 justStartedGame_.next
+                            }
+                    )
+
         Ongoing ongoingGame_ ->
             List.head ongoingGame_.next
                 |> Maybe.map
@@ -149,6 +176,9 @@ gameDecoder =
         |> Decoder.andThen
             (\t ->
                 case t of
+                    "JUST_STARTED" ->
+                        Decoder.map JustStarted justStartedDecoder
+
                     "ONGOING" ->
                         Decoder.map Ongoing ongoingDecoder
 
@@ -158,6 +188,13 @@ gameDecoder =
                     _ ->
                         Decoder.fail "unknown type"
             )
+
+
+justStartedDecoder : Decoder JustStartedGame_
+justStartedDecoder =
+    Decoder.map2 JustStartedGame_
+        (Decoder.field "current" NonEmptyString.decoder)
+        (Decoder.field "next" (Decoder.list NonEmptyString.decoder))
 
 
 ongoingDecoder : Decoder OngoingGame_
@@ -197,6 +234,13 @@ serialise game =
 toObject : Game -> Encoder.Value
 toObject game =
     case game of
+        JustStarted justStarted_ ->
+            Encoder.object
+                [ ( "type", Encoder.string "JUST_STARTED" )
+                , ( "current", NonEmptyString.encode justStarted_.current )
+                , ( "next", Encoder.list NonEmptyString.encode justStarted_.next )
+                ]
+
         Ongoing ongoing_ ->
             Encoder.object
                 [ ( "type", Encoder.string "ONGOING" )

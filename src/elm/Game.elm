@@ -11,6 +11,7 @@ module Game exposing
 
 import Json.Decode as Decoder exposing (Decoder)
 import Json.Encode as Encoder
+import Utils.NonEmptyString as NonEmptyString exposing (NonEmptyString)
 
 
 type Game
@@ -33,19 +34,19 @@ type alias FinishedGame_ =
 
 type alias PlayerEntry =
     { player : Player
-    , visible : String
-    , hidden : String
+    , visible : NonEmptyString
+    , hidden : NonEmptyString
     }
 
 
 type alias FinalPlayerEntry =
     { player : Player
-    , hidden : String
+    , hidden : NonEmptyString
     }
 
 
 type alias Player =
-    String
+    NonEmptyString
 
 
 new : Player -> List Player -> Game
@@ -58,8 +59,8 @@ new currentPlayer_ otherPlayers =
 
 
 type Status
-    = Playing { hint : Maybe String, currentPlayer : Player }
-    | LastMove { hint : String, currentPlayer : Player }
+    = Playing { hint : Maybe NonEmptyString, currentPlayer : Player }
+    | LastMove { hint : NonEmptyString, currentPlayer : Player }
     | Ended { entries : List PlayerEntry, finalEntry : FinalPlayerEntry }
 
 
@@ -69,12 +70,20 @@ status game =
         Ongoing ongoing_ ->
             if List.isEmpty ongoing_.next then
                 LastMove
-                    { hint = lastEntry ongoing_.before |> Maybe.map .visible |> Maybe.withDefault "this should not happen"
+                    { hint =
+                        lastEntry ongoing_.before
+                            |> Maybe.map .visible
+                            |> Maybe.withDefault NonEmptyString.escapeHatch
                     , currentPlayer = ongoing_.current
                     }
 
             else
-                Playing { hint = lastEntry ongoing_.before |> Maybe.map .visible, currentPlayer = ongoing_.current }
+                Playing
+                    { hint =
+                        lastEntry ongoing_.before
+                            |> Maybe.map .visible
+                    , currentPlayer = ongoing_.current
+                    }
 
         Finished finished_ ->
             Ended finished_
@@ -86,7 +95,7 @@ lastEntry before =
         |> List.head
 
 
-makeLastMove : String -> Game -> Maybe Game
+makeLastMove : NonEmptyString -> Game -> Maybe Game
 makeLastMove hidden game =
     case game of
         Ongoing ongoingGame_ ->
@@ -105,7 +114,7 @@ makeLastMove hidden game =
             Nothing
 
 
-makeNormalMove : String -> String -> Game -> Maybe Game
+makeNormalMove : NonEmptyString -> NonEmptyString -> Game -> Maybe Game
 makeNormalMove hidden visible game =
     case game of
         Ongoing ongoingGame_ ->
@@ -155,8 +164,8 @@ ongoingDecoder : Decoder OngoingGame_
 ongoingDecoder =
     Decoder.map3 OngoingGame_
         (Decoder.field "before" (Decoder.list playerEntryDecoder))
-        (Decoder.field "current" Decoder.string)
-        (Decoder.field "next" (Decoder.list Decoder.string))
+        (Decoder.field "current" NonEmptyString.decoder)
+        (Decoder.field "next" (Decoder.list NonEmptyString.decoder))
 
 
 finishedDecoder =
@@ -168,16 +177,16 @@ finishedDecoder =
 playerEntryDecoder : Decoder PlayerEntry
 playerEntryDecoder =
     Decoder.map3 PlayerEntry
-        (Decoder.field "player" Decoder.string)
-        (Decoder.field "visible" Decoder.string)
-        (Decoder.field "hidden" Decoder.string)
+        (Decoder.field "player" NonEmptyString.decoder)
+        (Decoder.field "visible" NonEmptyString.decoder)
+        (Decoder.field "hidden" NonEmptyString.decoder)
 
 
 finalEntryDecoder : Decoder FinalPlayerEntry
 finalEntryDecoder =
     Decoder.map2 FinalPlayerEntry
-        (Decoder.field "player" Decoder.string)
-        (Decoder.field "hidden" Decoder.string)
+        (Decoder.field "player" NonEmptyString.decoder)
+        (Decoder.field "hidden" NonEmptyString.decoder)
 
 
 serialise : Game -> String
@@ -191,9 +200,9 @@ toObject game =
         Ongoing ongoing_ ->
             Encoder.object
                 [ ( "type", Encoder.string "ONGOING" )
-                , ( "current", Encoder.string ongoing_.current )
+                , ( "current", NonEmptyString.encode ongoing_.current )
                 , ( "before", encodeBefore ongoing_.before )
-                , ( "next", Encoder.list Encoder.string ongoing_.next )
+                , ( "next", Encoder.list NonEmptyString.encode ongoing_.next )
                 ]
 
         Finished finished_ ->
@@ -207,8 +216,8 @@ toObject game =
 encodeFinal : FinalPlayerEntry -> Encoder.Value
 encodeFinal { player, hidden } =
     Encoder.object
-        [ ( "player", Encoder.string player )
-        , ( "hidden", Encoder.string hidden )
+        [ ( "player", NonEmptyString.encode player )
+        , ( "hidden", NonEmptyString.encode hidden )
         ]
 
 
@@ -220,7 +229,7 @@ encodeBefore =
 encodeEntry : PlayerEntry -> Encoder.Value
 encodeEntry { player, visible, hidden } =
     Encoder.object
-        [ ( "player", Encoder.string player )
-        , ( "hidden", Encoder.string hidden )
-        , ( "visible", Encoder.string visible )
+        [ ( "player", NonEmptyString.encode player )
+        , ( "hidden", NonEmptyString.encode hidden )
+        , ( "visible", NonEmptyString.encode visible )
         ]

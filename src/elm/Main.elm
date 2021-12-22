@@ -10,6 +10,8 @@ import Url exposing (Url)
 import Url.Builder as BuildUrl
 import Url.Parser as Url exposing ((</>))
 import Url.Parser.Query as Query
+import Utils.List as List
+import Utils.NonEmptyString as NonEmptyString exposing (NonEmptyString)
 import Validation exposing (Validation)
 
 
@@ -225,8 +227,8 @@ startButton_ game =
 startButtonValidation : Validation FormInputs Game
 startButtonValidation =
     Validation.for Game.new
-        |> Validation.require (.otherPlayers >> List.head)
-        |> Validation.require (.otherPlayers >> List.tail)
+        |> Validation.require (.otherPlayers >> List.head >> Maybe.withDefault "Gianni" >> NonEmptyString.build)
+        |> Validation.require (.otherPlayers >> List.drop 1 >> List.traverseMaybe NonEmptyString.build)
         |> Validation.checkIsTrue (.otherPlayers >> List.length >> (\len -> len > 1))
 
 
@@ -237,14 +239,14 @@ urlScreen game =
             Element.link [ Font.size 40, padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
                 { url = serialiseAsQueryParam game
                 , label =
-                    Element.text <| "Copia questo link e mandalo a " ++ currentPlayer
+                    Element.text <| "Copia questo link e mandalo a " ++ NonEmptyString.get currentPlayer
                 }
 
         Game.LastMove { currentPlayer } ->
             Element.link [ Font.size 40, padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
                 { url = serialiseAsQueryParam game
                 , label =
-                    Element.text <| "Copia questo link e mandalo a " ++ currentPlayer
+                    Element.text <| "Copia questo link e mandalo a " ++ NonEmptyString.get currentPlayer
                 }
 
         Game.Ended _ ->
@@ -261,7 +263,7 @@ playingScreen formInput game =
         Game.Playing { hint, currentPlayer } ->
             Element.column [ Font.size 30, width fill, centerX, padding 90, spacing 50 ]
                 [ prompt currentPlayer
-                , Maybe.map Element.text hint |> Maybe.withDefault Element.none
+                , Maybe.map (NonEmptyString.get >> Element.text) hint |> Maybe.withDefault Element.none
                 , yourStory formInput
                 , hintToTheNext formInput
                 , moveButton "Continua" formInput (normalMoveValidation game)
@@ -270,21 +272,21 @@ playingScreen formInput game =
         Game.LastMove { hint, currentPlayer } ->
             Element.column [ Font.size 30, width fill, centerX, padding 90, spacing 50 ]
                 [ prompt currentPlayer
-                , Element.text hint
+                , Element.text (NonEmptyString.get hint)
                 , yourStory formInput
                 , moveButton "Concludi" formInput (lastMoveValidation game)
                 ]
 
         Game.Ended { entries, finalEntry } ->
             Element.column [ padding 60, spacing 20, Font.size 40 ]
-                (List.map (\entry -> Element.text (entry.hidden ++ " " ++ entry.visible)) entries
-                    ++ [ Element.text finalEntry.hidden ]
+                (List.map (\entry -> Element.text (NonEmptyString.get entry.hidden ++ " " ++ NonEmptyString.get entry.visible)) entries
+                    ++ [ Element.text (NonEmptyString.get finalEntry.hidden) ]
                 )
 
 
-prompt : String -> Element msg
+prompt : NonEmptyString -> Element msg
 prompt player =
-    el [ Font.size 30 ] <| Element.text ("Tocca a te " ++ player)
+    el [ Font.size 30 ] <| Element.text ("Tocca a te " ++ NonEmptyString.get player)
 
 
 yourStory : FormInputs -> Element Msg
@@ -328,14 +330,14 @@ moveButton_ label game =
 normalMoveValidation : Game -> Validation FormInputs (Maybe Game)
 normalMoveValidation game =
     Validation.for (\hidden visible -> Game.makeNormalMove hidden visible game)
-        |> Validation.require (.hidden >> Just)
-        |> Validation.require (.visible >> Just)
+        |> Validation.require (.hidden >> NonEmptyString.build)
+        |> Validation.require (.visible >> NonEmptyString.build)
 
 
 lastMoveValidation : Game -> Validation FormInputs (Maybe Game)
 lastMoveValidation game =
     Validation.for (\hidden -> Game.makeLastMove hidden game)
-        |> Validation.require (.hidden >> Just)
+        |> Validation.require (.hidden >> NonEmptyString.build)
 
 
 serialiseAsQueryParam : Game -> String

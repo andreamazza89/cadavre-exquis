@@ -11,6 +11,7 @@ import Url.Builder as BuildUrl
 import Url.Parser as Url exposing ((</>))
 import Url.Parser.Query as Query
 import Utils.List as List
+import Utils.NonEmptyList as NonEmptyList exposing (NonEmptyList)
 import Utils.NonEmptyString as NonEmptyString exposing (NonEmptyString)
 import Validation exposing (Validation)
 
@@ -227,9 +228,13 @@ startButton_ game =
 startButtonValidation : Validation FormInputs Game
 startButtonValidation =
     Validation.for Game.new
-        |> Validation.require (.otherPlayers >> List.head >> Maybe.withDefault "Gianni" >> NonEmptyString.build)
-        |> Validation.require (.otherPlayers >> List.drop 1 >> List.traverseMaybe NonEmptyString.build)
-        |> Validation.checkIsTrue (.otherPlayers >> List.length >> (\len -> len > 1))
+        |> Validation.require (.otherPlayers >> List.head >> Maybe.map NonEmptyString.build >> joinMaybes)
+        |> Validation.require (.otherPlayers >> List.drop 1 >> List.traverseMaybe NonEmptyString.build >> foo)
+
+
+foo : Maybe (List NonEmptyString) -> Maybe (NonEmptyList NonEmptyString)
+foo =
+    Debug.todo ""
 
 
 urlScreen : Game -> Element msg
@@ -279,7 +284,7 @@ playingScreen formInput game =
 
         Game.Ended { entries, finalEntry } ->
             Element.column [ padding 60, spacing 20, Font.size 40 ]
-                (List.map (\entry -> Element.text (NonEmptyString.get entry.hidden ++ " " ++ NonEmptyString.get entry.visible)) entries
+                (List.map (\entry -> Element.text (NonEmptyString.get entry.hidden ++ " " ++ NonEmptyString.get entry.visible)) (NonEmptyList.toList entries)
                     ++ [ Element.text (NonEmptyString.get finalEntry.hidden) ]
                 )
 

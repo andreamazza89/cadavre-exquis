@@ -11,6 +11,7 @@ module Game exposing
 
 import Json.Decode as Decoder exposing (Decoder)
 import Json.Encode as Encoder
+import Utils.NonEmptyList as NonEmptyList exposing (NonEmptyList)
 import Utils.NonEmptyString as NonEmptyString exposing (NonEmptyString)
 
 
@@ -22,19 +23,19 @@ type Game
 
 type alias JustStartedGame_ =
     { current : Player
-    , next : List Player
+    , next : NonEmptyList Player
     }
 
 
 type alias OngoingGame_ =
-    { before : List PlayerEntry
+    { before : NonEmptyList PlayerEntry
     , current : Player
     , next : List Player
     }
 
 
 type alias FinishedGame_ =
-    { entries : List PlayerEntry
+    { entries : NonEmptyList PlayerEntry
     , finalEntry : FinalPlayerEntry
     }
 
@@ -56,11 +57,10 @@ type alias Player =
     NonEmptyString
 
 
-new : Player -> List Player -> Game
+new : Player -> NonEmptyList Player -> Game
 new currentPlayer_ otherPlayers =
-    Ongoing
-        { before = []
-        , current = currentPlayer_
+    JustStarted
+        { current = currentPlayer_
         , next = otherPlayers
         }
 
@@ -68,7 +68,7 @@ new currentPlayer_ otherPlayers =
 type Status
     = Playing { hint : Maybe NonEmptyString, currentPlayer : Player }
     | LastMove { hint : NonEmptyString, currentPlayer : Player }
-    | Ended { entries : List PlayerEntry, finalEntry : FinalPlayerEntry }
+    | Ended { entries : NonEmptyList PlayerEntry, finalEntry : FinalPlayerEntry }
 
 
 status : Game -> Status
@@ -84,7 +84,7 @@ status game =
             if List.isEmpty ongoing_.next then
                 LastMove
                     { hint =
-                        lastEntry ongoing_.before
+                        NonEmptyList.lastItem ongoing_.before
                             |> Maybe.map .visible
                             |> Maybe.withDefault NonEmptyString.escapeHatch
                     , currentPlayer = ongoing_.current
@@ -93,19 +93,13 @@ status game =
             else
                 Playing
                     { hint =
-                        lastEntry ongoing_.before
+                        NonEmptyList.lastItem ongoing_.before
                             |> Maybe.map .visible
                     , currentPlayer = ongoing_.current
                     }
 
         Finished finished_ ->
             Ended finished_
-
-
-lastEntry : List a -> Maybe a
-lastEntry before =
-    List.drop (List.length before - 1) before
-        |> List.head
 
 
 makeLastMove : NonEmptyString -> Game -> Maybe Game
@@ -134,22 +128,23 @@ makeNormalMove : NonEmptyString -> NonEmptyString -> Game -> Maybe Game
 makeNormalMove hidden visible game =
     case game of
         JustStarted justStartedGame_ ->
-            List.head justStartedGame_.next
-                |> Maybe.map
-                    (\nextPlayer ->
-                        Ongoing
-                            { before = [ { player = justStartedGame_.current, visible = visible, hidden = hidden } ]
-                            , current = nextPlayer
-                            , next = List.drop 1 justStartedGame_.next
-                            }
-                    )
+            NonEmptyList.head justStartedGame_.next
+                |> (\nextPlayer ->
+                        Just
+                            (Ongoing
+                                { before = NonEmptyList.fromItem { player = justStartedGame_.current, visible = visible, hidden = hidden }
+                                , current = nextPlayer
+                                , next = NonEmptyList.tail justStartedGame_.next
+                                }
+                            )
+                   )
 
         Ongoing ongoingGame_ ->
             List.head ongoingGame_.next
                 |> Maybe.map
                     (\nextPlayer ->
                         Ongoing
-                            { before = ongoingGame_.before ++ [ { player = ongoingGame_.current, visible = visible, hidden = hidden } ]
+                            { before = NonEmptyList.append { player = ongoingGame_.current, visible = visible, hidden = hidden } ongoingGame_.before
                             , current = nextPlayer
                             , next = List.drop 1 ongoingGame_.next
                             }
@@ -194,20 +189,20 @@ justStartedDecoder : Decoder JustStartedGame_
 justStartedDecoder =
     Decoder.map2 JustStartedGame_
         (Decoder.field "current" NonEmptyString.decoder)
-        (Decoder.field "next" (Decoder.list NonEmptyString.decoder))
+        (Decoder.field "next" (NonEmptyList.decoder NonEmptyString.decoder))
 
 
 ongoingDecoder : Decoder OngoingGame_
 ongoingDecoder =
     Decoder.map3 OngoingGame_
-        (Decoder.field "before" (Decoder.list playerEntryDecoder))
+        (Decoder.field "before" (NonEmptyList.decoder playerEntryDecoder))
         (Decoder.field "current" NonEmptyString.decoder)
         (Decoder.field "next" (Decoder.list NonEmptyString.decoder))
 
 
 finishedDecoder =
     Decoder.map2 FinishedGame_
-        (Decoder.field "entries" (Decoder.list playerEntryDecoder))
+        (Decoder.field "entries" (NonEmptyList.decoder playerEntryDecoder))
         (Decoder.field "finalEntry" finalEntryDecoder)
 
 
@@ -238,7 +233,7 @@ toObject game =
             Encoder.object
                 [ ( "type", Encoder.string "JUST_STARTED" )
                 , ( "current", NonEmptyString.encode justStarted_.current )
-                , ( "next", Encoder.list NonEmptyString.encode justStarted_.next )
+                , ( "next", NonEmptyList.encode NonEmptyString.encode justStarted_.next )
                 ]
 
         Ongoing ongoing_ ->
@@ -265,9 +260,9 @@ encodeFinal { player, hidden } =
         ]
 
 
-encodeBefore : List PlayerEntry -> Encoder.Value
+encodeBefore : NonEmptyList PlayerEntry -> Encoder.Value
 encodeBefore =
-    Encoder.list encodeEntry
+    NonEmptyList.encode encodeEntry
 
 
 encodeEntry : PlayerEntry -> Encoder.Value

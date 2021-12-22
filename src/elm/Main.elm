@@ -10,6 +10,7 @@ import Url exposing (Url)
 import Url.Builder as BuildUrl
 import Url.Parser as Url exposing ((</>))
 import Url.Parser.Query as Query
+import Validation exposing (Validation)
 
 
 type alias Model =
@@ -66,13 +67,13 @@ main =
 initFromUrl : Url -> Model
 initFromUrl url =
     Url.parse gameParser url
-        |> join
+        |> joinMaybes
         |> Maybe.map init
         |> Maybe.withDefault defaultModel
 
 
-join : Maybe (Maybe a) -> Maybe a
-join maybes =
+joinMaybes : Maybe (Maybe a) -> Maybe a
+joinMaybes maybes =
     case maybes of
         Just m ->
             m
@@ -86,7 +87,8 @@ gameParser =
 
 
 parseGame =
-    Maybe.andThen Game.deserialise
+    Maybe.map (String.map decode)
+        >> Maybe.andThen Game.deserialise
 
 
 init : Game -> Model
@@ -158,27 +160,7 @@ view2 { step, formInputs } =
             newGameScreen formInputs
 
         ShowingUrl game ->
-            case Game.status game of
-                Game.Playing { hint, currentPlayer } ->
-                    Element.link [ Font.size 40, padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
-                        { url = serialiseAsQueryParam game
-                        , label =
-                            Element.text <| "Copia questo link e mandalo a " ++ currentPlayer
-                        }
-
-                Game.LastMove { currentPlayer } ->
-                    Element.link [ Font.size 40, padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
-                        { url = serialiseAsQueryParam game
-                        , label =
-                            Element.text <| "Copia questo link e mandalo a " ++ currentPlayer
-                        }
-
-                Game.Ended _ ->
-                    Element.link [ Font.size 40, padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
-                        { url = serialiseAsQueryParam game
-                        , label =
-                            Element.text <| "Vatti a guardare il cadavere a questo link"
-                        }
+            urlScreen game
 
         Playing game ->
             playingScreen formInputs game
@@ -188,7 +170,7 @@ newGameScreen : FormInputs -> Element Msg
 newGameScreen formInputs =
     Element.column [ padding 40, spacing 90, centerX ]
         [ welcomeMessage
-        , playerrs formInputs
+        , players formInputs
         , startButton formInputs
         ]
 
@@ -205,8 +187,8 @@ welcomeMessage =
         ]
 
 
-playerrs : FormInputs -> Element Msg
-playerrs formInputs =
+players : FormInputs -> Element Msg
+players formInputs =
     Element.column [ centerX, spacing 20 ]
         [ Element.row [ spacing 20 ]
             [ Input.text [ focusedOnLoad, Font.size 30 ]
@@ -226,25 +208,51 @@ playerrs formInputs =
 
 
 startButton : FormInputs -> Element Msg
-startButton formInputs =
-    List.head formInputs.otherPlayers
-        |> Maybe.andThen
-            -- this is kinda terrible, would prefer to either introduce some form validation construct of just use an if statement
-            (\firstPlayer ->
-                if List.length formInputs.otherPlayers > 1 then
-                    Just firstPlayer
-
-                else
-                    Nothing
-            )
-        |> Maybe.map
-            (\firstPlayer ->
-                Input.button [ Font.size 30, centerX, padding 5, height fill, Border.width 2, Border.rounded 2 ]
-                    { onPress = Just (StartGameClicked (Game.new firstPlayer (List.drop 1 formInputs.otherPlayers)))
-                    , label = Element.text "Entra nella bara..."
-                    }
-            )
+startButton inputs =
+    Validation.run inputs startButtonValidation
+        |> Maybe.map startButton_
         |> Maybe.withDefault Element.none
+
+
+startButton_ : Game -> Element Msg
+startButton_ game =
+    Input.button [ Font.size 30, centerX, padding 5, height fill, Border.width 2, Border.rounded 2 ]
+        { onPress = Just (StartGameClicked game)
+        , label = Element.text "Entra nella bara..."
+        }
+
+
+startButtonValidation : Validation FormInputs Game
+startButtonValidation =
+    Validation.for Game.new
+        |> Validation.require (.otherPlayers >> List.head)
+        |> Validation.require (.otherPlayers >> List.tail)
+        |> Validation.checkIsTrue (.otherPlayers >> List.length >> (\len -> len > 1))
+
+
+urlScreen : Game -> Element msg
+urlScreen game =
+    case Game.status game of
+        Game.Playing { hint, currentPlayer } ->
+            Element.link [ Font.size 40, padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
+                { url = serialiseAsQueryParam game
+                , label =
+                    Element.text <| "Copia questo link e mandalo a " ++ currentPlayer
+                }
+
+        Game.LastMove { currentPlayer } ->
+            Element.link [ Font.size 40, padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
+                { url = serialiseAsQueryParam game
+                , label =
+                    Element.text <| "Copia questo link e mandalo a " ++ currentPlayer
+                }
+
+        Game.Ended _ ->
+            Element.link [ Font.size 40, padding 100, centerX, underline, Font.color (rgb 0 0 205) ]
+                { url = serialiseAsQueryParam game
+                , label =
+                    Element.text <| "Vatti a guardare il cadavere a questo link"
+                }
 
 
 playingScreen : FormInputs -> Game -> Element Msg
@@ -256,7 +264,7 @@ playingScreen formInput game =
                 , Maybe.map Element.text hint |> Maybe.withDefault Element.none
                 , yourStory formInput
                 , hintToTheNext formInput
-                , moveButton game formInput
+                , moveButton "Continua" formInput (normalMoveValidation game)
                 ]
 
         Game.LastMove { hint, currentPlayer } ->
@@ -264,7 +272,7 @@ playingScreen formInput game =
                 [ prompt currentPlayer
                 , Element.text hint
                 , yourStory formInput
-                , lastMoveButton game formInput
+                , moveButton "Concludi" formInput (lastMoveValidation game)
                 ]
 
         Game.Ended { entries, finalEntry } ->
@@ -274,10 +282,12 @@ playingScreen formInput game =
                 )
 
 
+prompt : String -> Element msg
 prompt player =
     el [ Font.size 30 ] <| Element.text ("Tocca a te " ++ player)
 
 
+yourStory : FormInputs -> Element Msg
 yourStory formInput =
     Input.multiline [ Font.size 30, height (fill |> minimum 300) ]
         { onChange = HiddenEntryTyped
@@ -288,6 +298,7 @@ yourStory formInput =
         }
 
 
+hintToTheNext : FormInputs -> Element Msg
 hintToTheNext formInput =
     Input.multiline [ Font.size 30 ]
         { onChange = VisibleEntryTyped
@@ -298,38 +309,45 @@ hintToTheNext formInput =
         }
 
 
-moveButton g formInputs =
-    if String.isEmpty formInputs.hidden || String.isEmpty formInputs.visible then
-        Element.none
-
-    else
-        Game.makeNormalMove formInputs.hidden formInputs.visible g
-            |> Maybe.map
-                (\game_ ->
-                    Input.button [ Font.size 30, padding 5, height fill, Border.width 2, Border.rounded 2 ]
-                        { onPress = Just (ContinueGameClicked game_)
-                        , label = Element.text "Procedi"
-                        }
-                )
-            |> Maybe.withDefault Element.none
+moveButton : String -> FormInputs -> Validation FormInputs (Maybe Game) -> Element Msg
+moveButton label inputs validation =
+    Validation.run inputs validation
+        |> joinMaybes
+        |> Maybe.map (moveButton_ label)
+        |> Maybe.withDefault Element.none
 
 
-lastMoveButton g formInputs =
-    if String.isEmpty formInputs.hidden then
-        Element.none
+moveButton_ : String -> Game -> Element Msg
+moveButton_ label game =
+    Input.button [ Font.size 30, padding 5, height fill, Border.width 2, Border.rounded 2 ]
+        { onPress = Just (ContinueGameClicked game)
+        , label = Element.text label
+        }
 
-    else
-        Game.makeLastMove formInputs.hidden g
-            |> Maybe.map
-                (\game_ ->
-                    Input.button [ Font.size 30, padding 5, height fill, Border.width 2, Border.rounded 2 ]
-                        { onPress = Just (ContinueGameClicked game_)
-                        , label = Element.text "Concludi"
-                        }
-                )
-            |> Maybe.withDefault Element.none
+
+normalMoveValidation : Game -> Validation FormInputs (Maybe Game)
+normalMoveValidation game =
+    Validation.for (\hidden visible -> Game.makeNormalMove hidden visible game)
+        |> Validation.require (.hidden >> Just)
+        |> Validation.require (.visible >> Just)
+
+
+lastMoveValidation : Game -> Validation FormInputs (Maybe Game)
+lastMoveValidation game =
+    Validation.for (\hidden -> Game.makeLastMove hidden game)
+        |> Validation.require (.hidden >> Just)
 
 
 serialiseAsQueryParam : Game -> String
 serialiseAsQueryParam game =
-    BuildUrl.absolute [ "index.html" ] [ BuildUrl.string "ongoing-state" (Game.serialise game) ]
+    BuildUrl.absolute [ "index.html" ] [ BuildUrl.string "ongoing-state" (String.map encode <| Game.serialise game) ]
+
+
+encode : Char -> Char
+encode a =
+    Char.toCode a |> (\c -> c + 1 |> Char.fromCode)
+
+
+decode : Char -> Char
+decode a =
+    Char.toCode a |> (\c -> c - 1 |> Char.fromCode)

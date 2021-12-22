@@ -84,12 +84,14 @@ joinMaybes maybes =
             Nothing
 
 
+gameParser : Url.Parser (Maybe Game -> c) c
 gameParser =
     Url.map parseGame (Url.s "index.html" </> Url.query (Query.string "ongoing-state"))
 
 
+parseGame : Maybe String -> Maybe Game
 parseGame =
-    Maybe.map (String.map decode)
+    Maybe.map (String.map decrypt)
         >> Maybe.andThen Game.deserialise
 
 
@@ -347,14 +349,14 @@ lastMoveValidation game =
 
 serialiseAsQueryParam : Game -> String
 serialiseAsQueryParam game =
-    BuildUrl.absolute [ "index.html" ] [ BuildUrl.string "ongoing-state" (String.map encode <| Game.serialise game) ]
+    BuildUrl.absolute [ "index.html" ] [ BuildUrl.string "ongoing-state" (String.map encrypt <| Game.serialise game) ]
 
 
-encode : Char -> Char
-encode a =
+encrypt : Char -> Char
+encrypt a =
     Char.toCode a |> (\c -> c + 1 |> Char.fromCode)
 
 
-decode : Char -> Char
-decode a =
+decrypt : Char -> Char
+decrypt a =
     Char.toCode a |> (\c -> c - 1 |> Char.fromCode)

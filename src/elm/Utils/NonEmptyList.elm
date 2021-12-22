@@ -7,7 +7,6 @@ module Utils.NonEmptyList exposing
     , fromList
     , head
     , lastItem
-    , map
     , tail
     , toList
     )

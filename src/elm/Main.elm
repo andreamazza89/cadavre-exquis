@@ -10,7 +10,6 @@ import Url exposing (Url)
 import Url.Builder as BuildUrl
 import Url.Parser as Url exposing ((</>))
 import Url.Parser.Query as Query
-import Utils.List as List
 import Utils.NonEmptyList as NonEmptyList exposing (NonEmptyList)
 import Utils.NonEmptyString as NonEmptyString exposing (NonEmptyString)
 import Validation exposing (Validation)
@@ -39,7 +38,7 @@ type Msg
 
 
 type alias FormInputs =
-    { otherPlayers : List String
+    { otherPlayers : List NonEmptyString
     , playerName : String
     , visible : String
     , hidden : String
@@ -150,9 +149,15 @@ updatePlayerName name inputs =
 
 addPlayer : FormInputs -> FormInputs
 addPlayer inputs =
+    Maybe.map (addPlayer_ inputs) (NonEmptyString.build inputs.playerName)
+        |> Maybe.withDefault inputs
+
+
+addPlayer_ : FormInputs -> NonEmptyString -> FormInputs
+addPlayer_ inputs playerToAdd =
     { inputs
         | playerName = ""
-        , otherPlayers = [ inputs.playerName ] ++ inputs.otherPlayers
+        , otherPlayers = [ playerToAdd ] ++ inputs.otherPlayers
     }
 
 
@@ -206,7 +211,7 @@ players formInputs =
                 }
             ]
         , Element.column [ spacing 15, Font.size 30 ]
-            (List.map Element.text formInputs.otherPlayers)
+            (List.map Element.text (List.map NonEmptyString.get formInputs.otherPlayers))
         ]
 
 
@@ -228,13 +233,8 @@ startButton_ game =
 startButtonValidation : Validation FormInputs Game
 startButtonValidation =
     Validation.for Game.new
-        |> Validation.require (.otherPlayers >> List.head >> Maybe.map NonEmptyString.build >> joinMaybes)
-        |> Validation.require (.otherPlayers >> List.drop 1 >> List.traverseMaybe NonEmptyString.build >> foo)
-
-
-foo : Maybe (List NonEmptyString) -> Maybe (NonEmptyList NonEmptyString)
-foo =
-    Debug.todo ""
+        |> Validation.require (.otherPlayers >> List.head)
+        |> Validation.require (.otherPlayers >> List.drop 1 >> NonEmptyList.fromList)
 
 
 urlScreen : Game -> Element msg

@@ -50,8 +50,12 @@ tail (NonEmptyList _ t) =
 
 
 lastItem : NonEmptyList a -> Maybe a
-lastItem (NonEmptyList _ t) =
-    List.drop (List.length t - 1) t
+lastItem nonEmptyList =
+    let
+        list =
+            toList nonEmptyList
+    in
+    List.drop (List.length list - 1) list
         |> List.head
 
 

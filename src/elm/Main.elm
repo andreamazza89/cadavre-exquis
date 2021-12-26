@@ -1,11 +1,15 @@
 module Main exposing (main)
 
 import Browser
-import Element exposing (Element, centerX, el, fill, height, minimum, padding, rgb, spacing, width)
+import Element exposing (Element, centerX, el, fill, height, minimum, padding, px, rgb, spacing, width)
 import Element.Border as Border
 import Element.Font as Font exposing (underline)
 import Element.Input as Input exposing (focusedOnLoad, labelHidden, placeholder)
 import Game exposing (Game)
+import Html
+import Html.Attributes
+import Html.Events
+import Json.Decode as Decode exposing (Decoder)
 import Url exposing (Url)
 import Url.Builder as BuildUrl
 import Url.Parser as Url exposing ((</>))
@@ -58,7 +62,7 @@ main : Program () Model Msg
 main =
     Browser.application
         { init = \_ url _ -> ( initFromUrl url, Cmd.none )
-        , view = \st -> { title = "Cadavre", body = [ Element.layout [] (view2 st) ] }
+        , view = \st -> { title = "Cadavre", body = [ Element.layout [] (view st) ] }
         , update = update
         , subscriptions = always Sub.none
         , onUrlRequest = always NoOp
@@ -66,33 +70,15 @@ main =
         }
 
 
-initFromUrl : Url -> Model
-initFromUrl url =
-    Url.parse gameParser url
-        |> joinMaybes
-        |> Maybe.map init
-        |> Maybe.withDefault defaultModel
-
-
 joinMaybes : Maybe (Maybe a) -> Maybe a
 joinMaybes maybes =
+    -- move me to a util space (or get rid of me if you can)
     case maybes of
         Just m ->
             m
 
         Nothing ->
             Nothing
-
-
-gameParser : Url.Parser (Maybe Game -> c) c
-gameParser =
-    Url.map parseGame (Url.s "index.html" </> Url.query (Query.string "ongoing-state"))
-
-
-parseGame : Maybe String -> Maybe Game
-parseGame =
-    Maybe.map (String.map decrypt)
-        >> Maybe.andThen Game.deserialise
 
 
 init : Game -> Model
@@ -163,8 +149,8 @@ addPlayer_ inputs playerToAdd =
     }
 
 
-view2 : Model -> Element Msg
-view2 { step, formInputs } =
+view : Model -> Element Msg
+view { step, formInputs } =
     case step of
         Creating ->
             newGameScreen formInputs
@@ -268,70 +254,33 @@ playingScreen : FormInputs -> Game -> Element Msg
 playingScreen formInput game =
     case Game.status game of
         Game.Playing { hint, currentPlayer } ->
-            Element.column [ Font.size 30, width fill, centerX, padding 90, spacing 50 ]
-                [ prompt currentPlayer
-                , Maybe.map (NonEmptyString.get >> Element.text) hint |> Maybe.withDefault Element.none
-                , yourStory formInput
-                , hintToTheNext formInput
-                , moveButton "Continua" formInput (normalMoveValidation game)
-                ]
+            paper
+                { currentPlayer = currentPlayer
+                , hint = hint
+                , showVisible = True
+                , button = mveButton "Continua" formInput (normalMoveValidation game)
+                }
 
         Game.LastMove { hint, currentPlayer } ->
-            Element.column [ Font.size 30, width fill, centerX, padding 90, spacing 50 ]
-                [ prompt currentPlayer
-                , Element.text (NonEmptyString.get hint)
-                , yourStory formInput
-                , moveButton "Concludi" formInput (lastMoveValidation game)
-                ]
+            paper
+                { currentPlayer = currentPlayer
+                , hint = Just hint
+                , showVisible = False
+                , button = mveButton "Concludi" formInput (lastMoveValidation game)
+                }
 
         Game.Ended { entries, finalEntry } ->
-            Element.column [ padding 60, spacing 20, Font.size 40 ]
+            Element.paragraph [ padding 60, spacing 20, Font.size 40 ]
                 (List.map (\entry -> Element.text (NonEmptyString.get entry.hidden ++ " " ++ NonEmptyString.get entry.visible)) (NonEmptyList.toList entries)
                     ++ [ Element.text (NonEmptyString.get finalEntry.hidden) ]
                 )
 
 
-prompt : NonEmptyString -> Element msg
-prompt player =
-    el [ Font.size 30 ] <| Element.text ("Tocca a te " ++ NonEmptyString.get player)
-
-
-yourStory : FormInputs -> Element Msg
-yourStory formInput =
-    Input.multiline [ Font.size 30, height (fill |> minimum 300) ]
-        { onChange = HiddenEntryTyped
-        , text = formInput.hidden
-        , placeholder = Just (placeholder [] (Element.text "Qui va la tua storia"))
-        , label = labelHidden "yourStory"
-        , spellcheck = False
-        }
-
-
-hintToTheNext : FormInputs -> Element Msg
-hintToTheNext formInput =
-    Input.multiline [ Font.size 30 ]
-        { onChange = VisibleEntryTyped
-        , text = formInput.visible
-        , placeholder = Just (placeholder [] (Element.text "Qui va il messagio per il prossimo"))
-        , label = labelHidden "yourStory"
-        , spellcheck = False
-        }
-
-
-moveButton : String -> FormInputs -> Validation FormInputs (Maybe Game) -> Element Msg
-moveButton label inputs validation =
+mveButton : String -> FormInputs -> Validation FormInputs (Maybe Game) -> Maybe ( Msg, String )
+mveButton label inputs validation =
     Validation.run inputs validation
         |> joinMaybes
-        |> Maybe.map (moveButton_ label)
-        |> Maybe.withDefault Element.none
-
-
-moveButton_ : String -> Game -> Element Msg
-moveButton_ label game =
-    Input.button [ Font.size 30, padding 5, height fill, Border.width 2, Border.rounded 2 ]
-        { onPress = Just (ContinueGameClicked game)
-        , label = Element.text label
-        }
+        |> Maybe.map (\game -> ( ContinueGameClicked game, label ))
 
 
 normalMoveValidation : Game -> Validation FormInputs (Maybe Game)
@@ -347,6 +296,29 @@ lastMoveValidation game =
         |> Validation.require (.hidden >> NonEmptyString.build)
 
 
+
+-- Game to/from url stuff
+
+
+initFromUrl : Url -> Model
+initFromUrl url =
+    Url.parse gameParser url
+        |> joinMaybes
+        |> Maybe.map init
+        |> Maybe.withDefault defaultModel
+
+
+gameParser : Url.Parser (Maybe Game -> c) c
+gameParser =
+    Url.map parseGame (Url.s "index.html" </> Url.query (Query.string "ongoing-state"))
+
+
+parseGame : Maybe String -> Maybe Game
+parseGame =
+    Maybe.map (String.map decrypt)
+        >> Maybe.andThen Game.deserialise
+
+
 serialiseAsQueryParam : Game -> String
 serialiseAsQueryParam game =
     BuildUrl.absolute [ "index.html" ] [ BuildUrl.string "ongoing-state" (String.map encrypt <| Game.serialise game) ]
@@ -360,3 +332,80 @@ encrypt a =
 decrypt : Char -> Char
 decrypt a =
     Char.toCode a |> (\c -> c - 1 |> Char.fromCode)
+
+
+
+-- Web component thing
+
+
+type alias PaperOptions =
+    { currentPlayer : NonEmptyString
+    , hint : Maybe NonEmptyString
+    , showVisible : Bool
+    , button : Maybe ( Msg, String )
+    }
+
+
+paper : PaperOptions -> Element Msg
+paper options =
+    Element.html
+        (Html.node "paper-note"
+            (List.concat
+                [ paperCurrentPlayer options.currentPlayer
+                , paperHint options.hint
+                , paperHidden
+                , paperVisible options.showVisible
+                , paperButton options.button
+                ]
+            )
+            []
+        )
+
+
+paperCurrentPlayer : NonEmptyString -> List (Html.Attribute msg)
+paperCurrentPlayer player =
+    [ Html.Attributes.attribute "current-player" (NonEmptyString.get player) ]
+
+
+paperHint : Maybe NonEmptyString -> List (Html.Attribute msg)
+paperHint =
+    Maybe.map
+        (\hint_ ->
+            [ Html.Attributes.attribute "show-hint" "true"
+            , Html.Attributes.attribute "hint-content" (NonEmptyString.get hint_)
+            ]
+        )
+        >> Maybe.withDefault [ Html.Attributes.attribute "show-hint" "false" ]
+
+
+paperHidden : List (Html.Attribute Msg)
+paperHidden =
+    [ Html.Events.on "hidden-content-changed" (Decode.map HiddenEntryTyped (Decode.field "detail" Decode.string)) ]
+
+
+paperVisible : Bool -> List (Html.Attribute Msg)
+paperVisible show =
+    [ Html.Attributes.attribute "show-visible" (toBooleanString show)
+    , Html.Events.on "visible-content-changed" (Decode.map VisibleEntryTyped (Decode.field "detail" Decode.string))
+    ]
+
+
+paperButton : Maybe ( msg, String ) -> List (Html.Attribute msg)
+paperButton =
+    Maybe.map
+        (\( msg, text ) ->
+            [ Html.Attributes.attribute "button-text" text
+            , Html.Attributes.attribute "show-button" "true"
+            , Html.Events.on "button-clicked" (Decode.succeed msg)
+            ]
+        )
+        >> Maybe.withDefault []
+
+
+toBooleanString : Bool -> String
+toBooleanString bool =
+    if bool then
+        "true"
+
+    else
+        "false"

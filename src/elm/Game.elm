@@ -161,7 +161,6 @@ makeNormalMove hidden visible game =
 deserialise : String -> Maybe Game
 deserialise =
     Decoder.decodeString gameDecoder
-        >> Debug.log "result"
         >> Result.toMaybe
 
 
